@@ -2,14 +2,20 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"time"
+
+	_ "moul.io/http2curl"
 )
+
+type requestReponse struct {
+	request  *http.Request
+	response *http.Response
+}
 
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
 	destConn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
@@ -24,17 +30,21 @@ func handleTunneling(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clinetConn, _, err := hijacker.Hijack()
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	}
 	go transfer(destConn, clinetConn)
+
 	go transfer(clinetConn, destConn)
 }
 
 func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	defer destination.Close()
+
 	defer source.Close()
 	io.Copy(destination, source)
+	log.Printf("source: %v\n", source)
 }
 
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
@@ -57,18 +67,31 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
+
 func StartProxy(pemPath, keyPath, proto string) {
 	server := &http.Server{
 		Addr: ":8888",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Print("\n BING BING Got Request!! \n")
+			// f, err := os.Create("curl_log.log")
+			// check(err)
+			// defer f.Close()
+
 			if r.Method == http.MethodConnect {
+
+				// command, _ := http2curl.GetCurlCommand(r)
+				// f.WriteString(command.String())
+				// f.Sync()
 				dump, _ := httputil.DumpRequest(r, true)
-				fmt.Printf("%q", dump)
+				log.Printf("%q", dump)
+				requestChan <- r
 				handleTunneling(w, r)
 			} else {
-				dump, _ := httputil.DumpRequest(r, true)
-				fmt.Printf("We in non connect: %q", dump)
+
 				handleHTTP(w, r)
 			}
 		}),
